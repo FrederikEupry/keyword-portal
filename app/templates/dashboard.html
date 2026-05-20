@@ -25,7 +25,6 @@ temperature mapping cdmo"></textarea>
         </label>
 
         <button class="btn btn-primary" type="submit">Run research</button>
-        <p class="hint">A run takes 3–10 minutes and costs ~$0.30 in API fees.</p>
     </form>
 </section>
 
@@ -34,7 +33,7 @@ temperature mapping cdmo"></textarea>
     {% if runs %}
     <table>
         <thead>
-            <tr><th>Topic</th><th>Seeds</th><th>Market</th><th>Status</th><th>Cost</th><th>Created</th><th></th></tr>
+            <tr><th>Topic</th><th>Seeds</th><th>Market</th><th>Status</th><th>Created</th><th></th></tr>
         </thead>
         <tbody>
             {% for r in runs %}
@@ -43,7 +42,6 @@ temperature mapping cdmo"></textarea>
                 <td>{{ parse_seeds(r.seeds_json)|length }}</td>
                 <td>{{ r.location|upper }}</td>
                 <td><span class="status status-{{ r.status }}">{{ r.status }}</span></td>
-                <td>${{ "%.2f"|format(r.cost_usd or 0) }}</td>
                 <td class="muted">{{ r.created_at[:16].replace("T", " ") }}</td>
                 <td>
                     {% if r.dossier_path %}

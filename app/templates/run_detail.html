@@ -6,7 +6,6 @@
 
     <div class="status-block">
         Status: <span id="status" class="status status-{{ run.status }}">{{ run.status }}</span>
-        <span id="cost" class="muted">${{ "%.2f"|format(run.cost_usd or 0) }}</span>
     </div>
 
     <div id="download-block" style="{% if not run.dossier_path %}display:none{% endif %}">
@@ -31,7 +30,6 @@
 <script>
 const runId = document.querySelector('.run-detail').dataset.runId;
 const statusEl = document.getElementById('status');
-const costEl = document.getElementById('cost');
 const downloadBlock = document.getElementById('download-block');
 const errorBlock = document.getElementById('error-block');
 
@@ -42,7 +40,6 @@ async function poll() {
         const data = await res.json();
         statusEl.textContent = data.status;
         statusEl.className = `status status-${data.status}`;
-        costEl.textContent = `$${(data.cost_usd || 0).toFixed(2)}`;
         if (data.dossier_ready) downloadBlock.style.display = '';
         if (data.error) {
             errorBlock.style.display = '';
