@@ -72,6 +72,7 @@ def render_dossier(result: ResearchResult) -> str:
         cost_usd=result.cost_usd,
         eupry_domain=settings.eupry_domain,
         ai=result.ai,
+        strategy=result.strategy,
     )
 
 

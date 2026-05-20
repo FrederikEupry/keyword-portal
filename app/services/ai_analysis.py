@@ -151,6 +151,9 @@ Rules:
 - If competitor_top10_overlap shows competitors winning a cluster, briefly mention it in the rationale."""
 
 
+# Schema kept minimal: minItems/maxItems on arrays aren't supported by all
+# providers (e.g. Bedrock rejects values other than 0/1). The 4-8 cluster count
+# is enforced via the prompt instead.
 CLUSTER_JSON_SCHEMA = {
     "name": "keyword_clusters",
     "strict": True,
@@ -161,8 +164,6 @@ CLUSTER_JSON_SCHEMA = {
         "properties": {
             "clusters": {
                 "type": "array",
-                "minItems": 4,
-                "maxItems": 8,
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
@@ -170,7 +171,7 @@ CLUSTER_JSON_SCHEMA = {
                     "properties": {
                         "name": {"type": "string"},
                         "theme": {"type": "string"},
-                        "keywords": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                        "keywords": {"type": "array", "items": {"type": "string"}},
                         "rationale": {"type": "string"},
                     },
                 },

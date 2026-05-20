@@ -23,6 +23,7 @@ from app.services.dataforseo import (
     DataForSEOClient,
     DataForSEOError,
 )
+from app.services.strategy_analysis import StrategyAnalysis, analyze_strategy
 
 
 @dataclass
@@ -38,6 +39,7 @@ class ResearchResult:
     competitors: list[dict] = field(default_factory=list)
     cost_usd: float = 0.0
     ai: AIAnalysis | None = None
+    strategy: StrategyAnalysis | None = None
 
 
 async def run_research(
@@ -144,5 +146,14 @@ async def run_research(
         competitor_rankings=result.competitor_rankings,
         market=market,
     )
+
+    # Strategy analysis depends on clusters from result.ai.
+    if result.ai and result.ai.enabled and result.ai.clusters:
+        result.strategy = await analyze_strategy(
+            clusters=result.ai.clusters,
+            serps=result.serps,
+            seeds=seeds,
+            market=market,
+        )
 
     return result

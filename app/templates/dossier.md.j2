@@ -54,13 +54,75 @@ Keywords grouped into recommended article clusters.
 
 **Why these belong together / angle:** {{ c.rationale }}
 
+{% if strategy and strategy.enabled and strategy.page_types.get(c.name) %}
+{% set pt = strategy.page_types.get(c.name) %}
+**Google rewards:** **{{ pt.dominant }}** ({{ pt.consensus_pct }}% of top 10) — *{{ pt.rationale }}*
+{% endif %}
+
 {% endfor %}
 
 ---
 
 {% endif %}
 
-## 3. Cannibalization check (Eupry coverage)
+{% if strategy and strategy.enabled and strategy.personas %}
+## 3. Personas
+
+Derived from the SERP intent signals and keyword mix. Score = relevance + clarity + trust + action (each 0-25). Only personas with score ≥ 40 per cluster shown.
+
+{% for p in strategy.personas %}
+### {{ loop.index }}. {{ p.name }}
+
+**Role:** {{ p.role }}
+**Motivation:** {{ p.motivation }}
+
+{% endfor %}
+
+### Cluster ↔ persona fit
+
+{% for c in ai.clusters %}
+{% set fits = strategy.cluster_persona_fit.get(c.name, []) %}
+{% if fits %}
+**{{ c.name }}:**
+{% for f in fits|sort(attribute="score", reverse=true) %}
+- *{{ f.persona }}* — {{ f.score }}/100. {{ f.gap_note }}
+{% endfor %}
+{% else %}
+**{{ c.name }}:** no strong persona fit (score < 40 across all personas — likely supporting/long-tail).
+{% endif %}
+
+{% endfor %}
+
+---
+
+{% endif %}
+
+{% if strategy and strategy.enabled and strategy.citation_grades %}
+## 4. Competitor citation-readiness (AI search optimization)
+
+For each cluster, the top-ranked competitor pages graded on how well they're optimized for AI citations (ChatGPT, Perplexity, Google AI Overviews). Use these scores as the bar to beat when writing Eupry's version.
+
+Score components (each 0-25): passage_length, definitions, specificity, structure.
+
+{% for c in ai.clusters %}
+{% set grades = strategy.citation_grades.get(c.name, []) %}
+{% if grades %}
+**{{ c.name }}**
+
+| Score | Domain | URL | Breakdown (PL / Def / Spec / Str) | Biggest gap |
+|---|---|---|---|---|
+{% for g in grades %}
+| **{{ g.score }}/100** | {{ g.domain }} | {{ g.url }} | {{ g.breakdown.passage_length }} / {{ g.breakdown.definitions }} / {{ g.breakdown.specificity }} / {{ g.breakdown.structure }} | {{ g.top_gap }} |
+{% endfor %}
+
+{% endif %}
+{% endfor %}
+
+---
+
+{% endif %}
+
+## 5. Cannibalization check (Eupry coverage)
 
 {% if eupry_rankings %}
 Keywords eupry.com ranks for (top 100) that overlap this research:
@@ -90,7 +152,7 @@ This is a greenfield opportunity — no cannibalization risk, but also no existi
 
 ---
 
-## 4. Keyword universe
+## 6. Keyword universe
 
 {% for seed in seeds %}
 ### Seed: "{{ seed }}"
@@ -108,7 +170,7 @@ This is a greenfield opportunity — no cannibalization risk, but also no existi
 
 ---
 
-## 5. SERP snapshot per seed (Google top 10)
+## 7. SERP snapshot per seed (Google top 10)
 
 {% for seed in seeds %}
 ### "{{ seed }}"
@@ -128,7 +190,7 @@ This is a greenfield opportunity — no cannibalization risk, but also no existi
 
 ---
 
-## 6. Competitor coverage
+## 8. Competitor coverage
 
 {% if competitors %}
 For each tracked competitor: keywords from this research where they rank in the top 100.
@@ -154,7 +216,7 @@ For each tracked competitor: keywords from this research where they rank in the 
 
 ---
 
-## 7. Content gaps & opportunities
+## 9. Content gaps & opportunities
 
 Keywords where: volume ≥ 200, Eupry doesn't rank top 100, at least one competitor ranks top 10.
 
@@ -170,7 +232,7 @@ Keywords where: volume ≥ 200, Eupry doesn't rank top 100, at least one competi
 
 ---
 
-## 8. Methodology & data sources
+## 10. Methodology & data sources
 
 - Keyword expansion: DataForSEO Labs `keyword_ideas` (up to 30 longtails per seed)
 - Volume / CPC: Google Ads via DataForSEO `search_volume`
@@ -180,6 +242,7 @@ Keywords where: volume ≥ 200, Eupry doesn't rank top 100, at least one competi
 - Eupry ranking inventory: DataForSEO `ranked_keywords` for {{ eupry_domain }}
 - Competitor list: Google Sheet (live)
 {% if ai and ai.enabled %}- Clustering + exec summary: LLM via OpenRouter (semantic grouping over the keyword universe)
+{% endif %}{% if strategy and strategy.enabled %}- Page-type consensus + personas + competitor citation grading: LLM via OpenRouter (post-clustering analyses)
 {% endif %}- DataForSEO cost: ${{ "%.4f"|format(cost_usd) }}{% if ai and ai.enabled and ai.cost_usd %} · AI cost: ${{ "%.4f"|format(ai.cost_usd) }}{% endif %}
 
 ---
