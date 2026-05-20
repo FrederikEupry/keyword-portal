@@ -23,11 +23,18 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="Eupry Keyword Portal", lifespan=lifespan)
 
+    # Set the Secure cookie flag only when the app is served over HTTPS.
+    # Browsers refuse to send Secure cookies over http://localhost, which breaks
+    # the OAuth CSRF-state round-trip in local dev.
+    is_https = settings.app_base_url.startswith("https://")
+
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.session_secret,
+        session_cookie="keyword_portal_session",
         same_site="lax",
-        https_only=not settings.debug,
+        https_only=is_https,
+        max_age=14 * 24 * 60 * 60,
     )
 
     static_dir = Path(__file__).parent / "static"
