@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="form-section">
+    <h2>New research run</h2>
+    <form action="/research" method="post">
+        <label>
+            Topic name
+            <input type="text" name="topic" required placeholder="e.g. Monitoring & mapping">
+        </label>
+
+        <label>
+            Seed keywords <small>(one per line, max 20)</small>
+            <textarea name="seeds" rows="10" required placeholder="cdmo environmental monitoring
+cdmo temperature monitoring
+contract manufacturer gmp monitoring
+temperature mapping cdmo"></textarea>
+        </label>
+
+        <label>
+            Market
+            <select name="market">
+                <option value="us">US — English</option>
+                <option value="de">Germany — German</option>
+            </select>
+        </label>
+
+        <button class="btn btn-primary" type="submit">Run research</button>
+        <p class="hint">A run takes 3–10 minutes and costs ~$0.30 in API fees.</p>
+    </form>
+</section>
+
+<section class="history">
+    <h2>Recent runs</h2>
+    {% if runs %}
+    <table>
+        <thead>
+            <tr><th>Topic</th><th>Seeds</th><th>Market</th><th>Status</th><th>Cost</th><th>Created</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for r in runs %}
+            <tr>
+                <td><a href="/runs/{{ r.id }}">{{ r.topic }}</a></td>
+                <td>{{ parse_seeds(r.seeds_json)|length }}</td>
+                <td>{{ r.location|upper }}</td>
+                <td><span class="status status-{{ r.status }}">{{ r.status }}</span></td>
+                <td>${{ "%.2f"|format(r.cost_usd or 0) }}</td>
+                <td class="muted">{{ r.created_at[:16].replace("T", " ") }}</td>
+                <td>
+                    {% if r.dossier_path %}
+                    <a href="/research/{{ r.id }}/download">Download</a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No runs yet. Submit the form above to get started.</p>
+    {% endif %}
+</section>
+{% endblock %}

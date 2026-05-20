@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="run-detail" data-run-id="{{ run.id }}">
+    <h2>{{ run.topic }}</h2>
+    <p class="muted">{{ run.location|upper }} · {{ seeds|length }} seeds · created {{ run.created_at[:16].replace("T", " ") }}</p>
+
+    <div class="status-block">
+        Status: <span id="status" class="status status-{{ run.status }}">{{ run.status }}</span>
+        <span id="cost" class="muted">${{ "%.2f"|format(run.cost_usd or 0) }}</span>
+    </div>
+
+    <div id="download-block" style="{% if not run.dossier_path %}display:none{% endif %}">
+        <a class="btn btn-primary" href="/research/{{ run.id }}/download">Download dossier (.md)</a>
+    </div>
+
+    <div id="error-block" style="{% if not run.error %}display:none{% endif %}">
+        <h3>Failed</h3>
+        <pre>{{ run.error or "" }}</pre>
+    </div>
+
+    <h3>Seeds</h3>
+    <ul>
+        {% for s in seeds %}<li>{{ s }}</li>{% endfor %}
+    </ul>
+
+    <p><a href="/">← Back to dashboard</a></p>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const runId = document.querySelector('.run-detail').dataset.runId;
+const statusEl = document.getElementById('status');
+const costEl = document.getElementById('cost');
+const downloadBlock = document.getElementById('download-block');
+const errorBlock = document.getElementById('error-block');
+
+async function poll() {
+    try {
+        const res = await fetch(`/research/${runId}/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        statusEl.textContent = data.status;
+        statusEl.className = `status status-${data.status}`;
+        costEl.textContent = `$${(data.cost_usd || 0).toFixed(2)}`;
+        if (data.dossier_ready) downloadBlock.style.display = '';
+        if (data.error) {
+            errorBlock.style.display = '';
+            errorBlock.querySelector('pre').textContent = data.error;
+        }
+        if (data.status === 'complete' || data.status === 'failed') return;
+        setTimeout(poll, 4000);
+    } catch (e) {
+        setTimeout(poll, 8000);
+    }
+}
+if (statusEl.textContent !== 'complete' && statusEl.textContent !== 'failed') poll();
+</script>
+{% endblock %}

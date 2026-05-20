@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.local
+data/*.db
+data/*.db-journal
+data/dossiers/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+*.egg-info/
+dist/
+build/
+client_secret*.json
+service_account*.json

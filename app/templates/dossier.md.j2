@@ -1,0 +1,187 @@
+{%- macro vol(v) -%}{% if v is none %}—{% else %}{{ "{:,}".format(v) }}{% endif %}{%- endmacro -%}
+{%- macro kd(v) -%}{% if v is none %}—{% else %}{{ v }}{% endif %}{%- endmacro -%}
+{%- macro cpc(v) -%}{% if v is none %}—{% else %}${{ "%.2f"|format(v) }}{% endif %}{%- endmacro -%}
+# Keyword Research: {{ topic }}
+
+**Generated:** {{ generated_at }}
+**Market:** {{ location }} ({{ language }})
+**Seeds:** {{ seeds|length }}
+**Total keywords analyzed:** {{ keywords|length }}
+**Eupry already ranks for:** {{ eupry_ranked_count }} / {{ keywords|length }} ({{ eupry_ranked_pct }}%)
+**API cost this run:** ${{ "%.2f"|format(cost_usd) }}
+
+---
+
+## Seed keywords (verbatim input)
+
+{% for seed in seeds %}
+- {{ seed }}
+{% endfor %}
+
+---
+
+## 1. Executive summary
+
+**Numbers at a glance**
+
+- **Total keywords:** {{ keywords|length }} ({{ seeds|length }} seeds + {{ keywords|length - seeds|length }} expansions)
+- **Combined monthly search volume:** {{ "{:,}".format(total_volume) }}
+- **Average keyword difficulty:** {{ avg_kd }}/100
+- **Eupry coverage:** {{ eupry_ranked_count }} of {{ keywords|length }} keywords already ranked ({{ eupry_ranked_pct }}%)
+{% if top_opportunity %}
+- **Top opportunity (mechanical):** *{{ top_opportunity.keyword }}* — volume {{ vol(top_opportunity.volume) }}, KD {{ kd(top_opportunity.kd) }}, no Eupry ranking
+{% endif %}
+
+{% if ai and ai.enabled and ai.exec_summary %}
+**Strategic read (AI-generated)**
+
+{{ ai.exec_summary }}
+{% endif %}
+
+---
+
+{% if ai and ai.enabled and ai.clusters %}
+## 2. Content clusters
+
+Keywords grouped into recommended article clusters.
+
+{% for c in ai.clusters %}
+### {{ loop.index }}. {{ c.name }}
+
+*{{ c.theme }}*
+
+**Keywords ({{ c.keywords|length }}):** {{ c.keywords|join(", ") }}
+
+**Why these belong together / angle:** {{ c.rationale }}
+
+{% endfor %}
+
+---
+
+{% endif %}
+
+## 3. Cannibalization check (Eupry coverage)
+
+{% if eupry_rankings %}
+Keywords eupry.com ranks for (top 100) that overlap this research:
+
+| Keyword | Eupry URL | Position | Volume |
+|---|---|---|---|
+{% for r in eupry_rankings|sort(attribute="position") %}
+| {{ r.keyword }} | {{ r.url or "—" }} | {{ r.position or "—" }} | {{ vol(r.volume) }} |
+{% endfor %}
+
+{% if cannibalization_risks %}
+### Cannibalization risks
+
+Multiple Eupry URLs ranking for the same keyword:
+
+{% for risk in cannibalization_risks %}
+- **{{ risk.keyword }}** — {{ risk.urls|join(", ") }}
+{% endfor %}
+{% else %}
+**No multi-URL cannibalization detected.**
+{% endif %}
+{% else %}
+Eupry does not currently rank in the top 100 for any keyword in this research set.
+
+This is a greenfield opportunity — no cannibalization risk, but also no existing momentum to build on.
+{% endif %}
+
+---
+
+## 4. Keyword universe
+
+{% for seed in seeds %}
+### Seed: "{{ seed }}"
+
+{% set seed_kws = keywords|selectattr("seed_parent", "equalto", seed)|list %}
+{% set seed_kws_sorted = seed_kws|sort(attribute="volume", reverse=true) %}
+
+| Keyword | Volume | KD | Intent | CPC | Competition | Eupry ranks? |
+|---|---|---|---|---|---|---|
+{% for kw in seed_kws_sorted %}
+| {{ kw.keyword }} | {{ vol(kw.volume) }} | {{ kd(kw.kd) }} | {{ kw.intent }} | {{ cpc(kw.cpc) }} | {{ kw.competition or "—" }} | {% if kw.keyword in eupry_ranked_set %}#{{ eupry_position_map[kw.keyword] }}{% else %}—{% endif %} |
+{% endfor %}
+
+{% endfor %}
+
+---
+
+## 5. SERP snapshot per seed (Google top 10)
+
+{% for seed in seeds %}
+### "{{ seed }}"
+
+{% set serp = serps.get(seed, []) %}
+{% if serp %}
+| Rank | Domain | URL | Title |
+|---|---|---|---|
+{% for item in serp %}
+| {{ item.rank }} | {{ item.domain }} | {{ item.url }} | {{ item.title or "" }} |
+{% endfor %}
+{% else %}
+*No SERP data returned for this seed.*
+{% endif %}
+
+{% endfor %}
+
+---
+
+## 6. Competitor coverage
+
+{% if competitors %}
+For each tracked competitor: keywords from this research where they rank in the top 100.
+
+{% for comp in competitors %}
+### {{ comp.name }} ({{ comp.domain }})
+
+{% set rankings = competitor_rankings.get(comp.name, []) %}
+{% if rankings %}
+| Keyword | Position | URL |
+|---|---|---|
+{% for r in rankings|sort(attribute="position") %}
+| {{ r.keyword }} | {{ r.position }} | {{ r.url or "—" }} |
+{% endfor %}
+{% else %}
+*No overlapping rankings in top 100.*
+{% endif %}
+
+{% endfor %}
+{% else %}
+*No competitor list configured — populate the Google Sheet to enable this section.*
+{% endif %}
+
+---
+
+## 7. Content gaps & opportunities
+
+Keywords where: volume ≥ 200, Eupry doesn't rank top 100, at least one competitor ranks top 10.
+
+{% if gaps %}
+| Keyword | Volume | KD | Intent | Ranking competitors |
+|---|---|---|---|---|
+{% for g in gaps %}
+| {{ g.keyword }} | {{ vol(g.volume) }} | {{ kd(g.kd) }} | {{ g.intent }} | {{ g.competitors|join(", ") }} |
+{% endfor %}
+{% else %}
+*No gaps matching criteria. Either coverage is strong or volume thresholds were not met.*
+{% endif %}
+
+---
+
+## 8. Methodology & data sources
+
+- Keyword expansion: DataForSEO Labs `keyword_ideas` (up to 30 longtails per seed)
+- Volume / CPC: Google Ads via DataForSEO `search_volume`
+- Difficulty: DataForSEO `bulk_keyword_difficulty` (0-100 scale)
+- Intent: DataForSEO `search_intent`
+- SERP top 10: DataForSEO `serp/google/organic/live/advanced`
+- Eupry ranking inventory: DataForSEO `ranked_keywords` for {{ eupry_domain }}
+- Competitor list: Google Sheet (live)
+{% if ai and ai.enabled %}- Clustering + exec summary: Claude Sonnet 4.6 (semantic grouping over the keyword universe)
+{% endif %}- DataForSEO cost: ${{ "%.4f"|format(cost_usd) }}{% if ai and ai.enabled and ai.cost_usd %} · AI cost: ${{ "%.4f"|format(ai.cost_usd) }}{% endif %}
+
+---
+
+*Generated by Eupry Keyword Portal · paste this into Claude to draft articles.*
