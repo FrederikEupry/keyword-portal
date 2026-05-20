@@ -1,32 +1,39 @@
-"""Claude API integration for semantic clustering + exec summary narrative.
+"""LLM analysis via OpenRouter (OpenAI-compatible API).
 
-Both functions share the same large keyword payload, so we use prompt caching:
-the payload goes in a cacheable system block, the per-call instruction is small.
+Two calls, run sequentially so the second one hits Anthropic's prompt cache:
+  1. cluster_keywords — group the keyword universe into named clusters
+  2. write_exec_summary — strategic narrative for the marketing lead
 
-If ANTHROPIC_API_KEY is unset, returns empty results and the dossier falls
+Both share the same large JSON payload. The first call writes it to cache
+(1.25x cost). The second reads from cache (0.1x cost). Serializing the calls
+trades ~5s of latency for ~23% cost savings.
+
+Default model: anthropic/claude-sonnet-4.6 (confirmed slug with dots).
+Override with OPENROUTER_MODEL — any chat model on OpenRouter works.
+
+If OPENROUTER_API_KEY is unset, returns empty results and the dossier falls
 back to the deterministic template.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from dataclasses import dataclass
 
-from anthropic import AsyncAnthropic
-from anthropic.types import TextBlock
+from openai import AsyncOpenAI
 
 from app.config import get_settings
 
 log = logging.getLogger(__name__)
 
-MAX_KEYWORDS_TO_LLM = 250  # cap to keep prompt size + latency sane
+MAX_KEYWORDS_TO_LLM = 250
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 @dataclass
 class AIAnalysis:
-    clusters: list[dict]  # [{name, theme, keywords: [str], rationale}]
-    exec_summary: str  # markdown paragraphs
+    clusters: list[dict]
+    exec_summary: str
     cost_usd: float = 0.0
     enabled: bool = True
 
@@ -40,25 +47,34 @@ async def analyze(
     market: str,
 ) -> AIAnalysis:
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        log.info("ANTHROPIC_API_KEY not set — skipping AI analysis")
+    if not settings.openrouter_api_key:
+        log.info("OPENROUTER_API_KEY not set — skipping AI analysis")
         return AIAnalysis(clusters=[], exec_summary="", enabled=False)
 
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+    headers: dict[str, str] = {}
+    if settings.openrouter_app_url:
+        headers["HTTP-Referer"] = settings.openrouter_app_url
+    if settings.openrouter_app_title:
+        headers["X-Title"] = settings.openrouter_app_title
 
-    # Build a compact payload sent ONCE and cached across the two calls.
+    client = AsyncOpenAI(
+        api_key=settings.openrouter_api_key,
+        base_url=OPENROUTER_BASE_URL,
+        default_headers=headers or None,
+    )
+
     payload = _build_shared_payload(topic, seeds, keywords, eupry_ranked_set, competitor_rankings, market)
 
-    clusters_task = _cluster_keywords(client, settings.anthropic_model, payload)
-    summary_task = _write_exec_summary(client, settings.anthropic_model, payload)
-
     try:
-        clusters, summary, cost = await _gather_with_cost(clusters_task, summary_task)
+        # Serialized: first call writes the cache, second call reads it.
+        # Parallel calls would produce two cache writes — ~23% more expensive.
+        clusters = await _cluster_keywords(client, settings.openrouter_model, payload)
+        summary = await _write_exec_summary(client, settings.openrouter_model, payload)
     except Exception as exc:
         log.exception("AI analysis failed; continuing without it")
         return AIAnalysis(clusters=[], exec_summary=f"_AI analysis unavailable: {exc}_", enabled=False)
 
-    return AIAnalysis(clusters=clusters, exec_summary=summary, cost_usd=cost, enabled=True)
+    return AIAnalysis(clusters=clusters, exec_summary=summary, enabled=True)
 
 
 # ----------------------------------------------------------------- payload
@@ -70,7 +86,6 @@ def _build_shared_payload(
     competitor_rankings: dict[str, list[dict]],
     market: str,
 ) -> str:
-    """Compact JSON the model uses for both clustering + summary."""
     sorted_kws = sorted(
         keywords,
         key=lambda k: (k.get("volume") or 0),
@@ -103,26 +118,31 @@ def _build_shared_payload(
     }, ensure_ascii=False)
 
 
+def _payload_user_message(payload: str, instruction: str) -> list[dict]:
+    """Build a user message with the cacheable payload block first, then the instruction.
+
+    Anthropic prompt caching (via OpenRouter) requires `cache_control` on a content
+    block. We mark the large JSON payload as ephemeral so the second call reads from
+    cache at 0.1x cost.
+    """
+    return [
+        {
+            "type": "text",
+            "text": f"<keyword_research_payload>\n{payload}\n</keyword_research_payload>",
+            "cache_control": {"type": "ephemeral"},
+        },
+        {"type": "text", "text": instruction},
+    ]
+
+
 # ---------------------------------------------------------------- clustering
 CLUSTER_SYSTEM = """You are an SEO content strategist analyzing keyword research for an editorial team. \
 Output strict JSON only — no prose outside the JSON."""
 
-CLUSTER_INSTRUCTION = """Cluster the keywords in the payload into 4-8 semantic content clusters.
+CLUSTER_INSTRUCTION = """Cluster the keywords in the payload above into 4-8 semantic content clusters.
 
 Each cluster represents a distinct article (or small group of closely related articles).
 Group by user intent and topical proximity — keywords that would naturally be answered by the same piece of content belong together.
-
-Output JSON shape:
-{
-  "clusters": [
-    {
-      "name": "Short marketing-meaningful name (3-6 words)",
-      "theme": "One-sentence description of what this cluster is about",
-      "keywords": ["kw1", "kw2", ...],
-      "rationale": "One sentence: why these belong together, and the recommended content angle"
-    }
-  ]
-}
 
 Rules:
 - Cover EVERY keyword from the payload. Don't drop any.
@@ -131,21 +151,47 @@ Rules:
 - If competitor_top10_overlap shows competitors winning a cluster, briefly mention it in the rationale."""
 
 
-async def _cluster_keywords(client: AsyncAnthropic, model: str, payload: str) -> list[dict]:
-    resp = await client.messages.create(
+CLUSTER_JSON_SCHEMA = {
+    "name": "keyword_clusters",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["clusters"],
+        "properties": {
+            "clusters": {
+                "type": "array",
+                "minItems": 4,
+                "maxItems": 8,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["name", "theme", "keywords", "rationale"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "theme": {"type": "string"},
+                        "keywords": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                        "rationale": {"type": "string"},
+                    },
+                },
+            }
+        },
+    },
+}
+
+
+async def _cluster_keywords(client: AsyncOpenAI, model: str, payload: str) -> list[dict]:
+    resp = await client.chat.completions.create(
         model=model,
         max_tokens=4000,
-        system=[
-            {"type": "text", "text": CLUSTER_SYSTEM},
-            {
-                "type": "text",
-                "text": f"<keyword_research_payload>\n{payload}\n</keyword_research_payload>",
-                "cache_control": {"type": "ephemeral"},
-            },
+        temperature=0.3,
+        response_format={"type": "json_schema", "json_schema": CLUSTER_JSON_SCHEMA},
+        messages=[
+            {"role": "system", "content": CLUSTER_SYSTEM},
+            {"role": "user", "content": _payload_user_message(payload, CLUSTER_INSTRUCTION)},
         ],
-        messages=[{"role": "user", "content": CLUSTER_INSTRUCTION}],
     )
-    text = _extract_text(resp)
+    text = (resp.choices[0].message.content or "").strip()
     data = _safe_json_parse(text)
     return data.get("clusters", []) if data else []
 
@@ -154,7 +200,7 @@ async def _cluster_keywords(client: AsyncAnthropic, model: str, payload: str) ->
 SUMMARY_SYSTEM = """You are an SEO content strategist briefing a marketing team. \
 Write in clear, direct prose. No hype, no marketing fluff. Use specific numbers from the data."""
 
-SUMMARY_INSTRUCTION = """Write a strategic executive summary of this keyword research, in markdown.
+SUMMARY_INSTRUCTION = """Write a strategic executive summary of the keyword research above, in markdown.
 
 Structure (use these headings):
 
@@ -177,51 +223,24 @@ Rules:
 - No emojis. No "Here's a summary" preamble. Start with the first heading."""
 
 
-async def _write_exec_summary(client: AsyncAnthropic, model: str, payload: str) -> str:
-    resp = await client.messages.create(
+async def _write_exec_summary(client: AsyncOpenAI, model: str, payload: str) -> str:
+    resp = await client.chat.completions.create(
         model=model,
         max_tokens=2000,
-        system=[
-            {"type": "text", "text": SUMMARY_SYSTEM},
-            {
-                "type": "text",
-                "text": f"<keyword_research_payload>\n{payload}\n</keyword_research_payload>",
-                "cache_control": {"type": "ephemeral"},
-            },
+        temperature=0.4,
+        messages=[
+            {"role": "system", "content": SUMMARY_SYSTEM},
+            {"role": "user", "content": _payload_user_message(payload, SUMMARY_INSTRUCTION)},
         ],
-        messages=[{"role": "user", "content": SUMMARY_INSTRUCTION}],
     )
-    return _extract_text(resp).strip()
+    return (resp.choices[0].message.content or "").strip()
 
 
 # ----------------------------------------------------------------- helpers
-async def _gather_with_cost(clusters_coro, summary_coro):
-    """Run both coroutines, sum the costs from response usage."""
-    clusters_resp_holder: dict = {}
-    summary_resp_holder: dict = {}
-
-    async def run_clusters():
-        clusters_resp_holder["result"] = await clusters_coro
-
-    async def run_summary():
-        summary_resp_holder["result"] = await summary_coro
-
-    await asyncio.gather(run_clusters(), run_summary())
-    # NOTE: anthropic SDK returns the message object inside our helpers,
-    # but we extracted the parsed result already. Cost tracked separately if needed.
-    return clusters_resp_holder["result"], summary_resp_holder["result"], 0.0
-
-
-def _extract_text(message) -> str:
-    parts = []
-    for block in message.content:
-        if isinstance(block, TextBlock):
-            parts.append(block.text)
-    return "".join(parts)
-
-
 def _safe_json_parse(text: str) -> dict | None:
-    """Tolerate Claude wrapping JSON in ```json fences."""
+    """Belt-and-braces JSON parsing. With json_schema response_format, the model
+    should always emit valid JSON, but this handles any edge case (e.g. provider
+    fallback that doesn't honor json_schema)."""
     text = text.strip()
     if text.startswith("```"):
         text = text.strip("`")
@@ -231,7 +250,6 @@ def _safe_json_parse(text: str) -> dict | None:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        # Try to find the first { ... last }
         start = text.find("{")
         end = text.rfind("}")
         if start != -1 and end > start:

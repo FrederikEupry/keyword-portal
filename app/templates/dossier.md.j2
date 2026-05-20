@@ -179,7 +179,7 @@ Keywords where: volume ≥ 200, Eupry doesn't rank top 100, at least one competi
 - SERP top 10: DataForSEO `serp/google/organic/live/advanced`
 - Eupry ranking inventory: DataForSEO `ranked_keywords` for {{ eupry_domain }}
 - Competitor list: Google Sheet (live)
-{% if ai and ai.enabled %}- Clustering + exec summary: Claude Sonnet 4.6 (semantic grouping over the keyword universe)
+{% if ai and ai.enabled %}- Clustering + exec summary: LLM via OpenRouter (semantic grouping over the keyword universe)
 {% endif %}- DataForSEO cost: ${{ "%.4f"|format(cost_usd) }}{% if ai and ai.enabled and ai.cost_usd %} · AI cost: ${{ "%.4f"|format(ai.cost_usd) }}{% endif %}
 
 ---

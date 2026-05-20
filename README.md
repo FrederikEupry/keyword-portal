@@ -17,6 +17,7 @@ Marketing enters a topic name + seed keywords. The portal:
 - FastAPI + Jinja templates + a sprinkle of HTMX
 - SQLite for job/run history
 - DataForSEO for all live SEO data
+- OpenRouter (default: Claude Sonnet 4.6) for semantic clustering + exec summary
 - Google OAuth (restricted to `@eupry.com`)
 - Deployed on Railway
 
