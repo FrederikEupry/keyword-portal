@@ -61,13 +61,29 @@ def _load_sync() -> list[dict]:
 
 
 def _service_account_info(value: str) -> dict | None:
-    """Accept either a path to JSON or the JSON contents itself."""
+    """Accept either a path to JSON or the JSON contents itself.
+
+    The Path(value).is_file() check has to be guarded — when value is the
+    full JSON blob (~2KB), Path treats it as a filename and stat() errors
+    out with [Errno 36] File name too long.
+    """
     if not value:
         return None
-    p = Path(value)
-    if p.is_file():
-        return json.loads(p.read_text())
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return None
+
+    # If it looks like JSON, parse it directly. Otherwise try as a file path.
+    stripped = value.lstrip()
+    if stripped.startswith("{"):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return None
+
+    # Treat as file path. Guard against pathologically long strings.
+    if len(value) < 4096:
+        try:
+            p = Path(value)
+            if p.is_file():
+                return json.loads(p.read_text())
+        except (OSError, ValueError):
+            pass
+    return None
