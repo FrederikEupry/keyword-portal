@@ -158,7 +158,7 @@ This is a greenfield opportunity — no cannibalization risk, but also no existi
 ### Seed: "{{ seed }}"
 
 {% set seed_kws = keywords|selectattr("seed_parent", "equalto", seed)|list %}
-{% set seed_kws_sorted = seed_kws|sort(attribute="volume", reverse=true) %}
+{% set seed_kws_sorted = sort_by_volume(seed_kws) %}
 
 | Keyword | Volume | KD | Intent | CPC | Competition | Eupry ranks? |
 |---|---|---|---|---|---|---|

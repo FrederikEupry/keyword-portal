@@ -48,8 +48,14 @@ def render_dossier(result: ResearchResult) -> str:
         new["keyword"] = kw["keyword"]
         keywords_with_lower.append(new)
 
+    def sort_by_volume(items: list[dict]) -> list[dict]:
+        """Sort keywords by volume desc. Treat None as 0 so the sort doesn't
+        TypeError when DataForSEO returns null volumes alongside real numbers."""
+        return sorted(items, key=lambda x: x.get("volume") or 0, reverse=True)
+
     tmpl = _env.get_template("dossier.md.j2")
     return tmpl.render(
+        sort_by_volume=sort_by_volume,
         topic=result.topic,
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         location=result.location,
