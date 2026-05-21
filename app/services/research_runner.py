@@ -23,6 +23,7 @@ from app.services.dataforseo import (
     DataForSEOClient,
     DataForSEOError,
 )
+from app.services.relevance_filter import filter_keywords
 from app.services.strategy_analysis import StrategyAnalysis, analyze_strategy
 
 
@@ -101,6 +102,14 @@ async def run_research(
                 "intent": intent_map.get(kw, "unknown"),
                 "seed_parent": keyword_to_seed.get(kw, kw),
             })
+
+        # ---- 2b. LLM relevance filter (drop industry noise like recipes, weather)
+        result.keywords = await filter_keywords(
+            keywords=result.keywords,
+            topic=topic,
+            seeds=seeds,
+            market=market,
+        )
 
         # ---- 3. SERP top 10 per seed (parallel)
         serp_results = await asyncio.gather(

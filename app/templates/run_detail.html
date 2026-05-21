@@ -295,7 +295,8 @@ function esc(s) {
 
 function formatN(n) {
     if (n === null || n === undefined) return '—';
-    return n.toLocaleString();
+    // Force en-US locale so 1900 → "1,900" not "1.900" (which reads as 1.9)
+    return n.toLocaleString('en-US');
 }
 
 function renderDossier(r) {
