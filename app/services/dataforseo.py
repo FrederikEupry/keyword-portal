@@ -6,11 +6,14 @@ Costs are tracked per-call so the runner can enforce a budget.
 from __future__ import annotations
 
 import base64
+import logging
 from typing import Any
 
 import httpx
 
 from app.config import get_settings
+
+log = logging.getLogger(__name__)
 
 BASE_URL = "https://api.dataforseo.com"
 
@@ -101,7 +104,17 @@ class DataForSEOClient:
                 "language_code": language_code,
             }],
         )
-        items = _first_result(body).get("items") or _first_result(body).get("result", [])
+        # The Google Ads endpoint puts items at task.result (one entry per
+        # keyword), NOT inside task.result[0].items. _first_result() gives us
+        # only the first one. Pull everything from the tasks[].result[] array.
+        items = _flatten_results(body)
+        log.info(
+            "search_volume: requested=%d returned=%d non_null_volume=%d sample=%r",
+            len(keywords),
+            len(items),
+            sum(1 for it in items if it.get("search_volume") is not None),
+            [{"k": it.get("keyword"), "v": it.get("search_volume")} for it in items[:3]],
+        )
         return {
             it["keyword"]: {
                 "volume": it.get("search_volume"),
@@ -220,6 +233,17 @@ def _first_result(body: dict) -> dict:
         return {}
     results = tasks[0].get("result") or []
     return results[0] if results else {}
+
+
+def _flatten_results(body: dict) -> list[dict]:
+    """Some endpoints (search_volume) return one task result per keyword, not
+    a wrapper object with .items. Flatten all task.result[] entries into a list.
+    """
+    out: list[dict] = []
+    for task in body.get("tasks") or []:
+        for r in task.get("result") or []:
+            out.append(r)
+    return out
 
 
 def _ki(item: dict, field: str):
