@@ -82,7 +82,28 @@ def write_dossier(result: ResearchResult, run_id: str) -> str:
     filename = f"research-{slugify(result.topic)}-{run_id[:8]}.md"
     path = Path(settings.dossier_dir) / filename
     path.write_text(render_dossier(result), encoding="utf-8")
+
+    # Also persist the structured result for the in-browser dashboard view.
+    json_path = Path(settings.dossier_dir) / f"{run_id}.json"
+    json_path.write_text(_result_to_json(result), encoding="utf-8")
     return str(path)
+
+
+def _result_to_json(result: ResearchResult) -> str:
+    """Dump the dataclass tree (incl. AIAnalysis, StrategyAnalysis) to JSON."""
+    import json as _json
+    from dataclasses import asdict
+    return _json.dumps(asdict(result), ensure_ascii=False, default=str)
+
+
+def load_result_json(run_id: str) -> dict | None:
+    """Load a previously-persisted result for the run-detail page."""
+    import json as _json
+    settings = get_settings()
+    json_path = Path(settings.dossier_dir) / f"{run_id}.json"
+    if not json_path.is_file():
+        return None
+    return _json.loads(json_path.read_text(encoding="utf-8"))
 
 
 # --------------------------------------------------------------- analysis helpers

@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from app.db import create_run, get_run, update_run_status
 from app.routes.auth import require_user
-from app.services.markdown_gen import write_dossier
+from app.services.markdown_gen import load_result_json, write_dossier
 from app.services.research_runner import run_research
 
 router = APIRouter()
@@ -67,6 +67,19 @@ async def status(run_id: str, user: dict = Depends(require_user)):
         "cost_usd": run["cost_usd"],
         "dossier_ready": bool(run["dossier_path"]),
     }
+
+
+@router.get("/research/{run_id}/data")
+async def data(run_id: str, user: dict = Depends(require_user)):
+    run = await get_run(run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    if run["user_email"] != user["email"]:
+        raise HTTPException(403, "Not your run")
+    result = load_result_json(run_id)
+    if not result:
+        raise HTTPException(404, "Result not ready")
+    return JSONResponse(result)
 
 
 @router.get("/research/{run_id}/download")

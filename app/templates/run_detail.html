@@ -1,34 +1,37 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="run-detail" data-run-id="{{ run.id }}">
-    <h2>{{ run.topic }}</h2>
-    <p class="run-meta">
-        {{ run.location|upper }}
-        <span class="run-meta-dot">·</span>
-        {{ seeds|length }} seed{{ "s" if seeds|length != 1 else "" }}
-        <span class="run-meta-dot">·</span>
-        created {{ run.created_at[:16].replace("T", " ") }}
-    </p>
 
-    <div class="status-banner">
-        <span id="status" class="status status-{{ run.status }}">{{ run.status }}</span>
-        <span class="status-banner-text" id="status-helper">
-            {% if run.status == "queued" %}Waiting in the queue.
-            {% elif run.status == "running" %}Working on it — fetching data and running the AI analyses.
-            {% elif run.status == "complete" %}Ready to download.
-            {% elif run.status == "failed" %}Something went wrong.
-            {% endif %}
-        </span>
+    <div class="run-header">
+        <div>
+            <h2>{{ run.topic }}</h2>
+            <p class="run-meta">
+                {{ run.location|upper }}
+                <span class="run-meta-dot">·</span>
+                {{ seeds|length }} seed{{ "s" if seeds|length != 1 else "" }}
+                <span class="run-meta-dot">·</span>
+                created {{ run.created_at[:16].replace("T", " ") }}
+            </p>
+        </div>
+        <div class="run-header-actions">
+            <span id="status" class="status status-{{ run.status }}">{{ run.status }}</span>
+            <a id="download-link" class="btn btn-cta {% if not run.dossier_path %}hidden{% endif %}" href="/research/{{ run.id }}/download">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M12 4.875v11 M12 15.875l-5.5-5.5 M12 15.875 l5.5-5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    <rect x="6" y="18.375" width="12" height="1.5" fill="currentColor"/>
+                </svg>
+                Download .md
+            </a>
+        </div>
     </div>
 
-    <div id="download-block" style="{% if not run.dossier_path %}display:none{% endif %}">
-        <a class="btn btn-cta" href="/research/{{ run.id }}/download">
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M12 4.875v11 M12 15.875l-5.5-5.5 M12 15.875 l5.5-5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                <rect x="6" y="18.375" width="12" height="1.5" fill="currentColor"/>
-            </svg>
-            Download dossier (.md)
-        </a>
+    <div id="status-helper" class="status-banner {% if run.status == 'complete' %}hidden{% endif %}">
+        <span class="status-banner-text" id="status-helper-text">
+            {% if run.status == "queued" %}Waiting in the queue.
+            {% elif run.status == "running" %}Working on it — fetching SERP and ranking data, then running the AI analyses. Takes a few minutes.
+            {% elif run.status == "failed" %}Something went wrong. See details below.
+            {% endif %}
+        </span>
     </div>
 
     <div id="error-block" class="error-block" style="{% if not run.error %}display:none{% endif %}">
@@ -36,8 +39,7 @@
         <pre>{{ run.error or "" }}</pre>
     </div>
 
-    <div class="spacer-md"></div>
-
+    <!-- Seeds always visible -->
     <div class="card">
         <div class="card-header">
             <span class="card-header-icon" aria-hidden="true">
@@ -53,7 +55,167 @@
         </ul>
     </div>
 
-    <a href="/" class="back-link">← Back to dashboard</a>
+    <!-- Everything below this is populated by JS once the run completes -->
+    <div id="dossier-view" class="hidden">
+
+        <div class="dossier-layout">
+
+            <aside class="toc">
+                <div class="toc-inner">
+                    <p class="toc-title">In this dossier</p>
+                    <a href="#summary">Summary</a>
+                    <a href="#clusters">Content clusters</a>
+                    <a href="#personas">Personas</a>
+                    <a href="#citations">Citation readiness</a>
+                    <a href="#cannibalization">Cannibalization</a>
+                    <a href="#gaps">Content gaps</a>
+                    <a href="#keywords">Keyword universe</a>
+                    <a href="#serps">SERPs</a>
+                </div>
+            </aside>
+
+            <div class="dossier-content">
+
+                <!-- Summary -->
+                <section id="summary" class="card">
+                    <div class="card-header">
+                        <span class="card-header-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none">
+                                <path d="M5 6C5 4.34315 6.34315 3 8 3H13.1716C13.702 3 14.2107 3.21071 14.5858 3.58579L18.4142 7.41421C18.7893 7.78929 19 8.29799 19 8.82843V18C19 19.6569 17.6569 21 16 21H8C6.34315 21 5 19.6569 5 18V6Z" stroke="currentColor" stroke-width="1.5"/>
+                                <path d="M13 3V5C13 7.20914 14.7909 9 17 9H19" stroke="currentColor" stroke-width="1.5"/>
+                            </svg>
+                        </span>
+                        <h2>Summary</h2>
+                    </div>
+                    <div class="stats-grid" id="stats-grid"></div>
+                    <div id="exec-summary" class="exec-summary"></div>
+                </section>
+
+                <!-- Clusters -->
+                <section id="clusters" class="card">
+                    <div class="card-header">
+                        <span class="card-header-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none">
+                                <circle cx="6" cy="6" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+                                <circle cx="18" cy="6" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+                                <circle cx="6" cy="18" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+                                <circle cx="18" cy="18" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+                                <path d="M8 7 L16 17 M16 7 L8 17" stroke="currentColor" stroke-width="1.5"/>
+                            </svg>
+                        </span>
+                        <h2>Content clusters</h2>
+                    </div>
+                    <p class="card-subtitle">Keywords grouped into recommended articles. Each card shows the format Google rewards and the top personas it serves.</p>
+                    <div id="clusters-list"></div>
+                </section>
+
+                <!-- Personas -->
+                <section id="personas" class="card">
+                    <div class="card-header">
+                        <span class="card-header-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none">
+                                <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.5"/>
+                                <path d="M4 21v-1a8 8 0 0116 0v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                            </svg>
+                        </span>
+                        <h2>Personas</h2>
+                    </div>
+                    <p class="card-subtitle">Audiences derived from the SERP intent signals and keyword mix.</p>
+                    <div id="personas-list" class="personas-grid"></div>
+                </section>
+
+                <!-- Citation grades -->
+                <section id="citations" class="card">
+                    <div class="card-header">
+                        <span class="card-header-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none">
+                                <path d="M11.5 20L11.7888 20.8664C11.9166 21.2499 12.2629 21.5188 12.6662 21.5476L17.242 21.8744C18.2468 21.9462 19.1481 21.2595 19.3457 20.2717L20 17L22 15L20 11C20 6.02944 15.9706 2 11 2C6.02944 2 2 6.02944 2 11C2 12.8874 2.58099 14.5171 3.57388 15.9349C3.83658 16.3101 4 16.7499 4 17.2078V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </span>
+                        <h2>Competitor citation readiness</h2>
+                        <span class="ai-tag" title="AI-generated grading">
+                            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <path d="M11.5 20L11.7888 20.8664C11.9166 21.2499 12.2629 21.5188 12.6662 21.5476L17.242 21.8744C18.2468 21.9462 19.1481 21.2595 19.3457 20.2717L20 17L22 15L20 11C20 6.02944 15.9706 2 11 2C6.02944 2 2 6.02944 2 11C2 12.8874 2.58099 14.5171 3.57388 15.9349C3.83658 16.3101 4 16.7499 4 17.2078V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            AI
+                        </span>
+                    </div>
+                    <p class="card-subtitle">The top-ranked competitor pages graded on how well they're optimized for AI citations (ChatGPT, Perplexity, Google AI Overviews). Score components: passage length, definitions, specificity, structure (each 0–25).</p>
+                    <div id="citations-list"></div>
+                </section>
+
+                <!-- Cannibalization -->
+                <section id="cannibalization" class="card">
+                    <div class="card-header">
+                        <span class="card-header-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none">
+                                <path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                            </svg>
+                        </span>
+                        <h2>Cannibalization check</h2>
+                    </div>
+                    <p class="card-subtitle">Eupry pages already ranking in the keyword universe.</p>
+                    <div id="cannibalization-body"></div>
+                </section>
+
+                <!-- Gaps -->
+                <section id="gaps" class="card">
+                    <div class="card-header">
+                        <span class="card-header-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none">
+                                <path d="M4 12h16M4 12l4-4M4 12l4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </span>
+                        <h2>Content gaps</h2>
+                    </div>
+                    <p class="card-subtitle">Volume ≥ 200, Eupry doesn't rank top 100, at least one competitor ranks top 10.</p>
+                    <div id="gaps-body"></div>
+                </section>
+
+                <!-- Keywords -->
+                <section id="keywords" class="card">
+                    <div class="card-header">
+                        <span class="card-header-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none">
+                                <path d="M11 19C15.4183 19 19 15.4183 19 11C19 6.58172 15.4183 3 11 3C6.58172 3 3 6.58172 3 11C3 15.4183 6.58172 19 11 19Z" stroke="currentColor" stroke-width="1.5"/>
+                                <path d="M21 21L17 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </span>
+                        <h2>Keyword universe</h2>
+                    </div>
+                    <div class="table-toolbar">
+                        <input type="search" id="keyword-search" placeholder="Search keywords…">
+                        <span class="muted" id="keyword-count"></span>
+                    </div>
+                    <div id="keywords-body"></div>
+                </section>
+
+                <!-- SERPs -->
+                <section id="serps" class="card">
+                    <div class="card-header">
+                        <span class="card-header-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none">
+                                <path d="M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="currentColor" stroke-width="1.5"/>
+                                <path d="M16 12C16 16.9706 14.2091 21 12 21C9.79086 21 8 16.9706 8 12C8 7.02944 9.79086 3 12 3C14.2091 3 16 7.02944 16 12Z" stroke="currentColor" stroke-width="1.5"/>
+                                <path d="M3 12h18" stroke="currentColor" stroke-width="1.5"/>
+                            </svg>
+                        </span>
+                        <h2>SERP snapshot per seed</h2>
+                    </div>
+                    <p class="card-subtitle">Top 10 organic results per seed keyword. Click a seed to expand.</p>
+                    <div id="serps-list"></div>
+                </section>
+
+                <a href="/" class="back-link">← Back to dashboard</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Skeleton shown until result loads -->
+    <div id="dossier-skeleton" class="card {% if run.status == 'complete' %}hidden{% endif %}">
+        <p class="muted" style="text-align:center; padding:2rem 0;">The full dossier will appear here once the run completes.</p>
+    </div>
+
 </section>
 {% endblock %}
 
@@ -62,14 +224,17 @@
 const runId = document.querySelector('.run-detail').dataset.runId;
 const statusEl = document.getElementById('status');
 const statusHelperEl = document.getElementById('status-helper');
-const downloadBlock = document.getElementById('download-block');
+const statusHelperText = document.getElementById('status-helper-text');
+const downloadLink = document.getElementById('download-link');
 const errorBlock = document.getElementById('error-block');
+const dossierView = document.getElementById('dossier-view');
+const dossierSkeleton = document.getElementById('dossier-skeleton');
 
 const STATUS_HELPERS = {
     queued: 'Waiting in the queue.',
-    running: 'Working on it — fetching data and running the AI analyses.',
-    complete: 'Ready to download.',
-    failed: 'Something went wrong.',
+    running: 'Working on it — fetching SERP and ranking data, then running the AI analyses. Takes a few minutes.',
+    complete: 'Ready.',
+    failed: 'Something went wrong. See details below.',
 };
 
 async function poll() {
@@ -79,18 +244,410 @@ async function poll() {
         const data = await res.json();
         statusEl.textContent = data.status;
         statusEl.className = `status status-${data.status}`;
-        if (STATUS_HELPERS[data.status]) statusHelperEl.textContent = STATUS_HELPERS[data.status];
-        if (data.dossier_ready) downloadBlock.style.display = '';
+        statusHelperText.textContent = STATUS_HELPERS[data.status] || '';
+        if (data.status === 'complete') statusHelperEl.classList.add('hidden');
+
+        if (data.dossier_ready) {
+            downloadLink.classList.remove('hidden');
+            await loadDossier();
+            return;
+        }
         if (data.error) {
             errorBlock.style.display = '';
             errorBlock.querySelector('pre').textContent = data.error;
         }
-        if (data.status === 'complete' || data.status === 'failed') return;
+        if (data.status === 'failed') return;
         setTimeout(poll, 4000);
     } catch (e) {
         setTimeout(poll, 8000);
     }
 }
-if (statusEl.textContent.trim() !== 'complete' && statusEl.textContent.trim() !== 'failed') poll();
+
+let dossierLoaded = false;
+async function loadDossier() {
+    if (dossierLoaded) return;
+    const res = await fetch(`/research/${runId}/data`);
+    if (!res.ok) {
+        // Older runs may not have a JSON file. Show a fallback notice.
+        dossierSkeleton.innerHTML = `
+            <p class="muted" style="text-align:center; padding:2rem 0;">
+                This run was generated before the in-browser view was added.<br>
+                Download the .md file above to see the full dossier.
+            </p>`;
+        return;
+    }
+    const result = await res.json();
+    renderDossier(result);
+    dossierSkeleton.classList.add('hidden');
+    dossierView.classList.remove('hidden');
+    dossierLoaded = true;
+}
+
+// ─── Renderers ─────────────────────────────────────────────────────────
+
+function esc(s) {
+    return (s ?? '').toString()
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
+}
+
+function formatN(n) {
+    if (n === null || n === undefined) return '—';
+    return n.toLocaleString();
+}
+
+function renderDossier(r) {
+    renderStats(r);
+    renderExecSummary(r);
+    renderClusters(r);
+    renderPersonas(r);
+    renderCitations(r);
+    renderCannibalization(r);
+    renderGaps(r);
+    renderKeywords(r);
+    renderSerps(r);
+}
+
+function renderStats(r) {
+    const totalVol = (r.keywords || []).reduce((s, k) => s + (k.volume || 0), 0);
+    const kds = (r.keywords || []).map(k => k.kd).filter(v => v !== null && v !== undefined);
+    const avgKd = kds.length ? Math.round(kds.reduce((a, b) => a + b, 0) / kds.length) : 0;
+    const eupryRanked = new Set((r.eupry_rankings || []).map(x => (x.keyword || '').toLowerCase()));
+    const eupryCount = (r.keywords || []).filter(k => eupryRanked.has(k.keyword.toLowerCase())).length;
+    const eupryPct = r.keywords?.length ? Math.round(eupryCount / r.keywords.length * 100) : 0;
+
+    document.getElementById('stats-grid').innerHTML = `
+        <div class="stat"><div class="stat-value">${r.keywords?.length || 0}</div><div class="stat-label">Total keywords</div></div>
+        <div class="stat"><div class="stat-value">${formatN(totalVol)}</div><div class="stat-label">Monthly volume (sum)</div></div>
+        <div class="stat"><div class="stat-value">${avgKd}<span class="stat-suffix">/100</span></div><div class="stat-label">Avg keyword difficulty</div></div>
+        <div class="stat"><div class="stat-value">${eupryCount} <span class="stat-suffix">(${eupryPct}%)</span></div><div class="stat-label">Eupry already ranks for</div></div>
+    `;
+}
+
+function renderExecSummary(r) {
+    const summary = r.ai?.exec_summary;
+    const el = document.getElementById('exec-summary');
+    if (!summary) {
+        el.innerHTML = '<p class="muted">AI strategic summary unavailable for this run.</p>';
+        return;
+    }
+    el.innerHTML = `
+        <div class="ai-callout">
+            <div class="ai-callout-header">
+                <span class="ai-tag">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M11.5 20L11.7888 20.8664C11.9166 21.2499 12.2629 21.5188 12.6662 21.5476L17.242 21.8744C18.2468 21.9462 19.1481 21.2595 19.3457 20.2717L20 17L22 15L20 11C20 6.02944 15.9706 2 11 2C6.02944 2 2 6.02944 2 11C2 12.8874 2.58099 14.5171 3.57388 15.9349C3.83658 16.3101 4 16.7499 4 17.2078V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    Strategic read
+                </span>
+            </div>
+            <div class="markdown-render">${markdownish(summary)}</div>
+        </div>
+    `;
+}
+
+function markdownish(md) {
+    // Just enough markdown for the headings + lists Claude generates
+    let html = esc(md);
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    // Group consecutive `- ` lines into <ul>
+    html = html.replace(/(^- .+(?:\n- .+)*)/gm, m => {
+        const items = m.split('\n').map(l => `<li>${l.replace(/^- /, '')}</li>`).join('');
+        return `<ul>${items}</ul>`;
+    });
+    // Paragraphs
+    html = html.split(/\n{2,}/).map(p => {
+        if (p.startsWith('<h') || p.startsWith('<ul')) return p;
+        return `<p>${p.replace(/\n/g, '<br>')}</p>`;
+    }).join('');
+    return html;
+}
+
+function renderClusters(r) {
+    const clusters = r.ai?.clusters || [];
+    const el = document.getElementById('clusters-list');
+    if (!clusters.length) {
+        el.innerHTML = '<p class="muted">No clusters were generated for this run.</p>';
+        return;
+    }
+    el.innerHTML = clusters.map((c, idx) => {
+        const pt = r.strategy?.page_types?.[c.name];
+        const fits = r.strategy?.cluster_persona_fit?.[c.name] || [];
+        const grades = r.strategy?.citation_grades?.[c.name] || [];
+        return `
+            <article class="cluster">
+                <header class="cluster-header">
+                    <span class="cluster-number">${idx + 1}</span>
+                    <div class="cluster-titles">
+                        <h3>${esc(c.name)}</h3>
+                        <p class="cluster-theme">${esc(c.theme || '')}</p>
+                    </div>
+                    <span class="cluster-kw-count">${c.keywords?.length || 0} kw</span>
+                </header>
+
+                ${pt ? `
+                <div class="cluster-meta-row">
+                    <div class="meta-item">
+                        <span class="meta-label">Google rewards</span>
+                        <span class="meta-value"><strong>${esc(pt.dominant)}</strong> · ${pt.consensus_pct}%</span>
+                    </div>
+                    <p class="meta-rationale">${esc(pt.rationale || '')}</p>
+                </div>` : ''}
+
+                <p class="cluster-rationale">${esc(c.rationale || '')}</p>
+
+                ${fits.length ? `
+                <div class="cluster-personas">
+                    <p class="cluster-section-label">Top personas</p>
+                    ${fits.slice(0, 4).map(f => `
+                        <div class="persona-fit">
+                            <span class="persona-fit-name">${esc(f.persona)}</span>
+                            <div class="score-bar"><div class="score-bar-fill" style="width:${f.score}%"></div></div>
+                            <span class="persona-fit-score">${f.score}</span>
+                        </div>
+                    `).join('')}
+                </div>` : ''}
+
+                ${grades.length ? `
+                <div class="cluster-citations">
+                    <p class="cluster-section-label">Bar to beat (top competitor pages, AI-citation score)</p>
+                    <ul class="citation-mini">
+                        ${grades.slice(0, 3).map(g => `
+                            <li>
+                                <span class="citation-score citation-score-${gradeBand(g.score)}">${g.score}</span>
+                                <a href="${esc(g.url)}" target="_blank" rel="noopener">${esc(g.domain)}</a>
+                            </li>
+                        `).join('')}
+                    </ul>
+                </div>` : ''}
+
+                <details class="cluster-keywords">
+                    <summary>All ${c.keywords?.length || 0} keywords</summary>
+                    <div class="kw-chips">
+                        ${(c.keywords || []).map(k => `<span class="kw-chip">${esc(k)}</span>`).join('')}
+                    </div>
+                </details>
+            </article>
+        `;
+    }).join('');
+}
+
+function gradeBand(score) {
+    if (score >= 70) return 'high';
+    if (score >= 40) return 'mid';
+    return 'low';
+}
+
+function renderPersonas(r) {
+    const personas = r.strategy?.personas || [];
+    const el = document.getElementById('personas-list');
+    if (!personas.length) {
+        el.innerHTML = '<p class="muted">No personas were derived for this run.</p>';
+        return;
+    }
+    el.innerHTML = personas.map(p => `
+        <article class="persona-card">
+            <div class="persona-avatar">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.5"/>
+                    <path d="M4 21v-1a8 8 0 0116 0v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+            </div>
+            <h3>${esc(p.name)}</h3>
+            <p class="persona-role">${esc(p.role)}</p>
+            <p class="persona-motivation">${esc(p.motivation)}</p>
+        </article>
+    `).join('');
+}
+
+function renderCitations(r) {
+    const grades = r.strategy?.citation_grades || {};
+    const el = document.getElementById('citations-list');
+    const entries = Object.entries(grades);
+    if (!entries.length) {
+        el.innerHTML = '<p class="muted">No competitor pages were graded for this run.</p>';
+        return;
+    }
+    el.innerHTML = entries.map(([clusterName, pages]) => `
+        <div class="citation-group">
+            <h3 class="citation-cluster-title">${esc(clusterName)}</h3>
+            ${pages.map(p => `
+                <article class="citation-page">
+                    <div class="citation-page-header">
+                        <span class="citation-score citation-score-${gradeBand(p.score)} citation-score-large">${p.score}</span>
+                        <div class="citation-page-meta">
+                            <a href="${esc(p.url)}" target="_blank" rel="noopener" class="citation-domain">${esc(p.domain)}</a>
+                            <span class="citation-url">${esc(p.url)}</span>
+                        </div>
+                    </div>
+                    <div class="citation-breakdown">
+                        ${['passage_length', 'definitions', 'specificity', 'structure'].map(k => `
+                            <div class="breakdown-item">
+                                <span class="breakdown-label">${k.replace('_', ' ')}</span>
+                                <div class="breakdown-bar"><div class="breakdown-bar-fill" style="width:${(p.breakdown[k] || 0) * 4}%"></div></div>
+                                <span class="breakdown-value">${p.breakdown[k] ?? '—'}<span class="muted">/25</span></span>
+                            </div>
+                        `).join('')}
+                    </div>
+                    ${p.strongest ? `<p class="citation-note"><strong>Strongest:</strong> ${esc(p.strongest)}</p>` : ''}
+                    ${p.top_gap ? `<p class="citation-note citation-gap"><strong>Biggest gap:</strong> ${esc(p.top_gap)}</p>` : ''}
+                </article>
+            `).join('')}
+        </div>
+    `).join('');
+}
+
+function renderCannibalization(r) {
+    const rankings = (r.eupry_rankings || []).sort((a, b) => (a.position || 999) - (b.position || 999));
+    const el = document.getElementById('cannibalization-body');
+    if (!rankings.length) {
+        el.innerHTML = `
+            <div class="info-block">
+                <p><strong>Greenfield opportunity.</strong> Eupry doesn't rank in the top 100 for any keyword in this research set — no cannibalization risk, but also no existing momentum.</p>
+            </div>`;
+        return;
+    }
+    el.innerHTML = `
+        <div class="table-wrapper">
+            <table>
+                <thead><tr><th>Keyword</th><th>Position</th><th>URL</th><th>Volume</th></tr></thead>
+                <tbody>
+                    ${rankings.map(x => `
+                        <tr>
+                            <td>${esc(x.keyword)}</td>
+                            <td><span class="position-pill">#${x.position}</span></td>
+                            <td>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.url)}</a>` : '—'}</td>
+                            <td>${formatN(x.volume)}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+function renderGaps(r) {
+    // Replicate the same logic as the .md template (volume >= 200, not eupry, >= 1 competitor top 10)
+    const eupryRanked = new Set((r.eupry_rankings || []).map(x => (x.keyword || '').toLowerCase()));
+    const competitorTop10 = {};
+    Object.entries(r.competitor_rankings || {}).forEach(([name, rankings]) => {
+        rankings.forEach(rk => {
+            if ((rk.position || 999) <= 10) {
+                const k = (rk.keyword || '').toLowerCase();
+                if (!competitorTop10[k]) competitorTop10[k] = [];
+                competitorTop10[k].push(name);
+            }
+        });
+    });
+
+    const gaps = (r.keywords || [])
+        .filter(k => (k.volume || 0) >= 200)
+        .filter(k => !eupryRanked.has(k.keyword.toLowerCase()))
+        .filter(k => (competitorTop10[k.keyword.toLowerCase()] || []).length > 0)
+        .sort((a, b) => (b.volume || 0) - (a.volume || 0))
+        .slice(0, 50);
+
+    const el = document.getElementById('gaps-body');
+    if (!gaps.length) {
+        el.innerHTML = '<p class="muted">No gaps match the criteria. Either coverage is strong or volume thresholds weren\'t met.</p>';
+        return;
+    }
+    el.innerHTML = `
+        <div class="table-wrapper">
+            <table>
+                <thead><tr><th>Keyword</th><th>Volume</th><th>KD</th><th>Intent</th><th>Ranking competitors</th></tr></thead>
+                <tbody>
+                    ${gaps.map(g => `
+                        <tr>
+                            <td>${esc(g.keyword)}</td>
+                            <td>${formatN(g.volume)}</td>
+                            <td>${g.kd ?? '—'}</td>
+                            <td><span class="intent-pill intent-${g.intent}">${esc(g.intent || '')}</span></td>
+                            <td>${(competitorTop10[g.keyword.toLowerCase()] || []).map(c => `<span class="comp-chip">${esc(c)}</span>`).join(' ')}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+function renderKeywords(r) {
+    const allKw = (r.keywords || []).slice().sort((a, b) => (b.volume || 0) - (a.volume || 0));
+    const eupryRanked = new Set((r.eupry_rankings || []).map(x => (x.keyword || '').toLowerCase()));
+    const eupryPos = {};
+    (r.eupry_rankings || []).forEach(x => { eupryPos[(x.keyword || '').toLowerCase()] = x.position; });
+    const search = document.getElementById('keyword-search');
+    const count = document.getElementById('keyword-count');
+    const body = document.getElementById('keywords-body');
+
+    function paint(filter = '') {
+        const f = filter.toLowerCase().trim();
+        const filtered = f ? allKw.filter(k => k.keyword.toLowerCase().includes(f)) : allKw;
+        count.textContent = `${filtered.length} of ${allKw.length}`;
+        body.innerHTML = `
+            <div class="table-wrapper">
+                <table>
+                    <thead><tr><th>Keyword</th><th>Volume</th><th>KD</th><th>Intent</th><th>CPC</th><th>Eupry rank</th></tr></thead>
+                    <tbody>
+                        ${filtered.map(k => {
+                            const kl = k.keyword.toLowerCase();
+                            return `
+                            <tr>
+                                <td>${esc(k.keyword)}</td>
+                                <td>${formatN(k.volume)}</td>
+                                <td>${k.kd ?? '—'}</td>
+                                <td><span class="intent-pill intent-${k.intent}">${esc(k.intent || '')}</span></td>
+                                <td>${k.cpc ? `$${k.cpc.toFixed(2)}` : '—'}</td>
+                                <td>${eupryRanked.has(kl) ? `<span class="position-pill">#${eupryPos[kl]}</span>` : '<span class="muted">—</span>'}</td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+    paint();
+    search.addEventListener('input', e => paint(e.target.value));
+}
+
+function renderSerps(r) {
+    const serps = r.serps || {};
+    const el = document.getElementById('serps-list');
+    const entries = Object.entries(serps);
+    if (!entries.length) {
+        el.innerHTML = '<p class="muted">No SERP data was returned.</p>';
+        return;
+    }
+    el.innerHTML = entries.map(([seed, items], idx) => `
+        <details class="serp-group" ${idx === 0 ? 'open' : ''}>
+            <summary>"${esc(seed)}" <span class="muted">(${items.length} results)</span></summary>
+            <div class="table-wrapper">
+                <table>
+                    <thead><tr><th>Rank</th><th>Domain</th><th>Title</th></tr></thead>
+                    <tbody>
+                        ${items.map(it => `
+                            <tr>
+                                <td><span class="position-pill">#${it.rank}</span></td>
+                                <td><a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.domain)}</a></td>
+                                <td>${esc(it.title || '')}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </details>
+    `).join('');
+}
+
+// ─── Boot ──────────────────────────────────────────────────────────────
+if (statusEl.textContent.trim() === 'complete') {
+    loadDossier();
+} else if (statusEl.textContent.trim() !== 'failed') {
+    poll();
+}
 </script>
 {% endblock %}
