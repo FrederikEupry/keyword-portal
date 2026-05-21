@@ -263,59 +263,94 @@ async def _derive_personas(
 
 
 # ================================================== #1 competitor citation grading
+# Browser-like UA — some sites (Cloudflare-protected) 403 anything that looks like a bot.
+# We're a transparent internal tool, not stealth scraping, but a realistic UA gets us
+# past the cheapest bot filters. Real defenses (Akamai, hCaptcha) will still 403; those
+# are handled gracefully by the caller.
+PAGE_FETCH_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 KeywordPortalBot/0.4"
+)
+
+
 async def _grade_competitor_citations(
     client: AsyncOpenAI,
     model: str,
     clusters: list[dict],
     serps: dict[str, list[dict]],
 ) -> dict[str, list[dict]]:
-    """Per cluster: fetch top 3 competitor URLs and grade citation-readiness."""
-    out: dict[str, list[dict]] = {}
+    """Grade citation-readiness for competitor pages, deduped across clusters.
 
+    Many URLs appear in multiple clusters' SERPs (a competitor that ranks for
+    several seeds). We fetch each URL once, grade each (url, cluster) pair
+    once, and assemble the per-cluster results from the shared cache.
+    """
+    # First pass: map cluster -> list of URLs and collect the unique URL set.
+    cluster_urls: dict[str, list[str]] = {}
+    unique_urls: set[str] = set()
+    for cluster in clusters:
+        urls = _pick_competitor_urls(cluster, serps, MAX_COMPETITOR_PAGES_PER_CLUSTER)
+        if not urls:
+            continue
+        cluster_urls[cluster.get("name")] = urls
+        unique_urls.update(urls)
+
+    if not unique_urls:
+        return {}
+
+    # Fetch all unique URLs once, in parallel.
     async with httpx.AsyncClient(
         timeout=PAGE_FETCH_TIMEOUT,
         follow_redirects=True,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; KeywordPortalBot/0.3)"},
+        headers={
+            "User-Agent": PAGE_FETCH_UA,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
     ) as http_client:
-        for cluster in clusters:
-            urls = _pick_competitor_urls(cluster, serps, MAX_COMPETITOR_PAGES_PER_CLUSTER)
-            if not urls:
+        url_list = list(unique_urls)
+        fetched = await asyncio.gather(
+            *[_fetch_and_extract(http_client, u) for u in url_list],
+            return_exceptions=True,
+        )
+        page_cache: dict[str, tuple[str, str]] = {}
+        for url, result in zip(url_list, fetched, strict=True):
+            if isinstance(result, Exception) or not result:
                 continue
+            page_cache[url] = result  # (domain, text)
 
-            fetch_results = await asyncio.gather(
-                *[_fetch_and_extract(http_client, url) for url in urls],
-                return_exceptions=True,
-            )
-
-            grades: list[dict] = []
-            grade_tasks = []
-            paired_urls: list[tuple[str, str]] = []
-            for url, fetch_result in zip(urls, fetch_results, strict=True):
-                if isinstance(fetch_result, Exception) or not fetch_result:
-                    continue
-                domain, text = fetch_result
-                paired_urls.append((url, domain))
-                grade_tasks.append(_grade_one_page(client, model, cluster.get("name"), url, text))
-
-            if not grade_tasks:
+    # Second pass: grade each (url, cluster) pair where we have a fetched page.
+    grade_jobs: list[tuple[str, str, asyncio.Task]] = []  # (cluster_name, url, task)
+    for cluster_name, urls in cluster_urls.items():
+        for url in urls:
+            if url not in page_cache:
                 continue
+            _, text = page_cache[url]
+            task = asyncio.create_task(_grade_one_page(client, model, cluster_name, url, text))
+            grade_jobs.append((cluster_name, url, task))
 
-            grade_results = await asyncio.gather(*grade_tasks, return_exceptions=True)
-            for (url, domain), grade in zip(paired_urls, grade_results, strict=True):
-                if isinstance(grade, Exception) or not grade:
-                    continue
-                grades.append({
-                    "url": url,
-                    "domain": domain,
-                    "score": grade.get("score"),
-                    "breakdown": grade.get("breakdown", {}),
-                    "top_gap": grade.get("top_gap"),
-                    "strongest": grade.get("strongest"),
-                })
+    if not grade_jobs:
+        return {}
 
-            if grades:
-                out[cluster.get("name")] = sorted(grades, key=lambda g: g.get("score") or 0, reverse=True)
+    grade_results = await asyncio.gather(*(t for _, _, t in grade_jobs), return_exceptions=True)
 
+    out: dict[str, list[dict]] = {}
+    for (cluster_name, url, _), grade in zip(grade_jobs, grade_results, strict=True):
+        if isinstance(grade, Exception) or not grade:
+            continue
+        domain, _ = page_cache[url]
+        out.setdefault(cluster_name, []).append({
+            "url": url,
+            "domain": domain,
+            "score": grade.get("score"),
+            "breakdown": grade.get("breakdown", {}),
+            "top_gap": grade.get("top_gap"),
+            "strongest": grade.get("strongest"),
+        })
+
+    # Sort each cluster's grades by score descending.
+    for name in out:
+        out[name] = sorted(out[name], key=lambda g: g.get("score") or 0, reverse=True)
     return out
 
 
@@ -433,7 +468,11 @@ def _pick_competitor_urls(cluster: dict, serps: dict[str, list[dict]], n: int) -
 
 
 async def _fetch_and_extract(client: httpx.AsyncClient, url: str) -> tuple[str, str] | None:
-    """Returns (domain, readable_text) or None on failure."""
+    """Returns (domain, readable_text) or None on failure.
+
+    403s from bot-protected sites (Cloudflare, Akamai) are expected and logged
+    quietly at debug level. Anything else gets info-level so we notice patterns.
+    """
     try:
         resp = await client.get(url)
         resp.raise_for_status()
@@ -444,6 +483,12 @@ async def _fetch_and_extract(client: httpx.AsyncClient, url: str) -> tuple[str, 
             return None
         domain = httpx.URL(url).host or url
         return domain, text
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (403, 429):
+            log.debug("Bot-protected site blocked fetch (%s): %s", exc.response.status_code, url)
+        else:
+            log.info("Fetch failed (HTTP %s): %s", exc.response.status_code, url)
+        return None
     except Exception as exc:
         log.info("Fetch failed for %s: %s", url, exc)
         return None
