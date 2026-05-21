@@ -347,23 +347,52 @@ function renderExecSummary(r) {
 }
 
 function markdownish(md) {
-    // Just enough markdown for the headings + lists Claude generates
-    let html = esc(md);
-    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    // Group consecutive `- ` lines into <ul>
-    html = html.replace(/(^- .+(?:\n- .+)*)/gm, m => {
-        const items = m.split('\n').map(l => `<li>${l.replace(/^- /, '')}</li>`).join('');
-        return `<ul>${items}</ul>`;
-    });
-    // Paragraphs
-    html = html.split(/\n{2,}/).map(p => {
-        if (p.startsWith('<h') || p.startsWith('<ul')) return p;
-        return `<p>${p.replace(/\n/g, '<br>')}</p>`;
-    }).join('');
-    return html;
+    // Parse Claude's section-headed markdown into clean HTML.
+    // Split on blank lines into blocks, identify each block's type, render.
+    const blocks = md.split(/\n\s*\n/);
+    const html = [];
+
+    for (const raw of blocks) {
+        const block = raw.trim();
+        if (!block) continue;
+
+        // Heading
+        const h3 = block.match(/^###\s+(.+)$/);
+        if (h3) { html.push(`<h3>${esc(h3[1])}</h3>`); continue; }
+        const h2 = block.match(/^##\s+(.+)$/);
+        if (h2) { html.push(`<h2>${esc(h2[1])}</h2>`); continue; }
+        const h4 = block.match(/^####\s+(.+)$/);
+        if (h4) { html.push(`<h4>${esc(h4[1])}</h4>`); continue; }
+
+        // Unordered list (every line starts with - or *)
+        const lines = block.split('\n');
+        if (lines.every(l => /^\s*[-*]\s+/.test(l))) {
+            const items = lines.map(l => `<li>${inline(l.replace(/^\s*[-*]\s+/, ''))}</li>`).join('');
+            html.push(`<ul>${items}</ul>`);
+            continue;
+        }
+
+        // Ordered list
+        if (lines.every(l => /^\s*\d+\.\s+/.test(l))) {
+            const items = lines.map(l => `<li>${inline(l.replace(/^\s*\d+\.\s+/, ''))}</li>`).join('');
+            html.push(`<ol>${items}</ol>`);
+            continue;
+        }
+
+        // Plain paragraph — collapse internal newlines into spaces
+        html.push(`<p>${inline(block.replace(/\n/g, ' '))}</p>`);
+    }
+
+    return html.join('');
+}
+
+function inline(text) {
+    // Inline markdown — bold, italic — safe-escaped first.
+    let s = esc(text);
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    return s;
 }
 
 function renderClusters(r) {
