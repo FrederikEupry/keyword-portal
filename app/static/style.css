@@ -53,7 +53,7 @@ a { color: var(--eupry-black); text-decoration: none; }
 a:hover { color: var(--eupry-orange); }
 
 /* ───────────────────────────────────────── Header ─── */
-header {
+body > header {
     position: sticky;
     top: 0;
     z-index: 10;
