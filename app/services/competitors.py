@@ -1,8 +1,16 @@
 """Load competitor list from a Google Sheet.
 
-Sheet structure assumed (confirm with marketing):
-  Column A: Competitor name
-  Column B: Primary domain (e.g. vaisala.com)
+Columns are matched by header name (case-insensitive) so the sheet can have
+extra columns or be reordered without breaking the loader.
+
+Required headers:
+  - "Companies" (or "Company" / "Name") — competitor name
+  - "Domain" — primary domain, e.g. vaisala.com
+
+Optional:
+  - "Primary?" — if present, only rows where this column has a truthy
+    value (x, X, yes, true, 1, ✓) are included. If the column doesn't
+    exist, all rows with a name + domain are included.
 
 If GOOGLE_SERVICE_ACCOUNT_JSON or COMPETITORS_SHEET_ID is unset, returns an
 empty list and the dossier sections that depend on competitors are skipped.
@@ -80,23 +88,65 @@ def _load_sync() -> list[dict]:
         return []
 
     log.info("Sheet opened. raw_rows=%d", len(rows))
-    if rows:
-        log.info("First row preview (header): %r", rows[0][:3])
-        if len(rows) > 1:
-            log.info("Second row preview: %r", rows[1][:3])
+    if not rows:
+        log.warning("Sheet is empty")
+        return []
 
+    header_row = [c.strip().lower() for c in rows[0]]
+    log.info("Header row normalized: %r", header_row)
+
+    name_idx = _find_column(header_row, ["companies", "company", "name", "competitor"])
+    domain_idx = _find_column(header_row, ["domain", "url", "website"])
+    primary_idx = _find_column(header_row, ["primary?", "primary", "is primary", "core"])
+
+    if name_idx is None or domain_idx is None:
+        log.error(
+            "Sheet missing required columns. Found headers=%r. "
+            "Need at least 'Companies' and 'Domain'.",
+            header_row,
+        )
+        return []
+
+    log.info(
+        "Columns mapped: name=col%d domain=col%d primary=%s",
+        name_idx, domain_idx,
+        f"col{primary_idx}" if primary_idx is not None else "none (loading all rows)",
+    )
+
+    truthy = {"x", "yes", "y", "true", "1", "✓", "primary"}
     out: list[dict] = []
+    skipped_non_primary = 0
     for row in rows[1:]:
-        if len(row) < 2:
+        if len(row) <= max(name_idx, domain_idx):
             continue
-        name, domain = row[0].strip(), row[1].strip().lower()
+        name = row[name_idx].strip()
+        domain = row[domain_idx].strip().lower()
         if not name or not domain:
             continue
+
+        if primary_idx is not None and primary_idx < len(row):
+            if row[primary_idx].strip().lower() not in truthy:
+                skipped_non_primary += 1
+                continue
+
         domain = domain.replace("https://", "").replace("http://", "").rstrip("/")
         out.append({"name": name, "domain": domain})
 
-    log.info("Competitors loaded: %d", len(out))
+    log.info(
+        "Competitors loaded: %d (skipped %d non-primary)",
+        len(out), skipped_non_primary,
+    )
     return out
+
+
+def _find_column(headers: list[str], candidates: list[str]) -> int | None:
+    """Find the first header that matches any of the candidate names."""
+    for cand in candidates:
+        cand_lower = cand.lower()
+        for idx, h in enumerate(headers):
+            if h == cand_lower:
+                return idx
+    return None
 
 
 def _service_account_info(value: str) -> dict | None:
